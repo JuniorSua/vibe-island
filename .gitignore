@@ -1,0 +1,20 @@
+# Build products
+.build/
+dist/
+*.dSYM/
+
+# Third-party sprite sheets (© OpenAI, fetched at setup — see scripts/fetch-pets.sh)
+Sources/VibeIsland/Resources/pets/*.webp
+
+# Vendored reference source (upstream: github.com/realfishsam/agent-notch)
+vendor/
+
+# Local notes not intended for publication
+vibe-island-spec.md
+
+# Runtime data / logs (never committed — may contain local paths & prompts)
+*.log
+diagnostics.log
+sessions.json
+
+.DS_Store
