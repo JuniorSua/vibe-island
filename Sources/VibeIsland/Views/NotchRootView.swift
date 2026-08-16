@@ -175,7 +175,16 @@ struct NotchRootView: View {
         lastHoverChange = Date()
         if over {
             everHovered = true
-            if store.toast == nil { store.expanded = true }
+            if store.expanded { return }
+            // Dwell before opening: passing through the strip on the way to a
+            // menu-bar item or window control must not pop the panel. The
+            // pointer has to still be there after the delay.
+            let armedAt = lastHoverChange
+            DispatchQueue.main.asyncAfter(deadline: .now() + HoverTuning.openDelay) {
+                if hovering, lastHoverChange == armedAt, store.toast == nil {
+                    store.expanded = true
+                }
+            }
         } else {
             // Snappy on mouse-out, but a request you're deciding on shouldn't
             // vanish the instant the pointer drifts off it.
@@ -185,6 +194,18 @@ struct NotchRootView: View {
             }
         }
     }
+}
+
+/// Hover feel. Tuned so the island opens only when you clearly aim at it: a
+/// short trigger strip hugging the notch (not the whole menu-bar height) plus
+/// a dwell delay so a pointer merely passing by on its way to a window control
+/// never opens the panel.
+enum HoverTuning {
+    /// Height of the collapsed hover strip, measured from the screen top.
+    /// The notch is 32 pt tall; this keeps the trigger inside its upper part.
+    static let stripHeight: CGFloat = 20
+    /// Time the pointer must remain in the strip before the panel opens.
+    static let openDelay: TimeInterval = 0.35
 }
 
 /// Animatable blur used to give pill ↔ panel swaps a Dynamic-Island-style
@@ -315,7 +336,9 @@ struct MascotBarView: View {
             // receive events while the panel window is ordered in.)
             Color.clear
                 .frame(width: metrics.hasNotch ? metrics.notchWidth : 150,
-                       height: metrics.hasNotch ? metrics.notchHeight : 24)
+                       height: min(metrics.hasNotch ? metrics.notchHeight : 24,
+                                   HoverTuning.stripHeight))
+                .frame(height: metrics.hasNotch ? metrics.notchHeight : 24, alignment: .top)
                 .contentShape(Rectangle())
                 .onHover(perform: onHover)
                 .onTapGesture { store.expanded = true }
@@ -344,7 +367,13 @@ struct MascotBarView: View {
                     }
                 }
                 .frame(height: max(metrics.notchHeight, 24))
-                .contentShape(Rectangle())
+                // Mascots draw at full height, but only the strip along the
+                // very top is a hover target — the lower part of the notch
+                // area stays inert so nearby controls remain clickable.
+                .contentShape(Rectangle().path(in: CGRect(
+                    x: 0, y: 0,
+                    width: 100_000,
+                    height: HoverTuning.stripHeight)))
                 .onHover(perform: onHover)
                 .onTapGesture { store.expanded = true }
                 .contextMenu { IslandContextMenu() }

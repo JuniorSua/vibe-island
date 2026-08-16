@@ -98,7 +98,19 @@ final class HoverCatcherView: NSView {
         tracking = area
     }
 
-    override func mouseEntered(with event: NSEvent) { onEnter?() }
+    private var armed = false
+
+    /// Same dwell rule as the SwiftUI side: the pointer must still be inside
+    /// after the delay, so passing through never opens the panel.
+    override func mouseEntered(with event: NSEvent) {
+        armed = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + HoverTuning.openDelay) { [weak self] in
+            guard let self, self.armed else { return }
+            self.onEnter?()
+        }
+    }
+
+    override func mouseExited(with event: NSEvent) { armed = false }
 }
 
 /// Non-activating, always-on-top panel anchored to the notch (or top-center on
@@ -107,6 +119,7 @@ final class HoverCatcherView: NSView {
 final class NotchPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
+
 
     /// Allow the panel to sit flush with the top of the screen, overlapping the
     /// menu bar / notch area — AppKit would otherwise push it down.
@@ -203,6 +216,7 @@ final class NotchPanelController {
         setupHoverCatcher()
         updateVisibility()
         startVisibilityHeartbeat()
+        startPassThroughTracking()
     }
 
     /// Always-on notch-sized hover target (see HoverCatcherView).
@@ -233,7 +247,8 @@ final class NotchPanelController {
         guard let catcher = hoverCatcher else { return }
         let screen = targetScreen
         let w = metrics.hasNotch ? metrics.notchWidth : 150
-        let h = metrics.hasNotch ? metrics.notchHeight : 24
+        // Only the upper strip of the notch is a trigger (see HoverTuning).
+        let h = min(metrics.hasNotch ? metrics.notchHeight : 24, HoverTuning.stripHeight)
         let frame = NSRect(x: (screen.frame.midX - w / 2).rounded(),
                            y: screen.frame.maxY - h,
                            width: w, height: h)
@@ -315,6 +330,39 @@ final class NotchPanelController {
             panel.setFrame(frame, display: true, animate: false)
         }
         _ = animated
+    }
+
+    /// The window is a large transparent canvas (680×460) so SwiftUI can
+    /// animate the island inside it. Whenever the pointer is NOT over the
+    /// visible island, the whole window becomes click-through so menu-bar
+    /// items and window controls underneath stay usable. Re-evaluated on a
+    /// fast timer because the pointer can move without any SwiftUI event.
+    private var passThroughTimer: Timer?
+    private func startPassThroughTracking() {
+        let t = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in
+            self?.updatePassThrough()
+        }
+        RunLoop.main.add(t, forMode: .common)
+        passThroughTimer = t
+    }
+
+    private func updatePassThrough() {
+        guard panel.isVisible else { return }
+        let island = metrics.islandFrame
+        // While collapsed, the mascot strip is the only interactive area and
+        // sits within the reported frame as well.
+        guard !island.isEmpty else { panel.ignoresMouseEvents = false; return }
+        let mouse = NSEvent.mouseLocation                     // screen coords
+        let inWindow = panel.convertPoint(fromScreen: mouse)  // window coords
+        // islandFrame is reported in SwiftUI "global" space = window space
+        // with a top-left origin; flip to AppKit's bottom-left origin.
+        let flipped = CGRect(x: island.minX,
+                             y: panel.frame.height - island.maxY,
+                             width: island.width, height: island.height)
+        let over = flipped.insetBy(dx: -4, dy: -4).contains(inWindow)
+        if panel.ignoresMouseEvents == over {
+            panel.ignoresMouseEvents = !over
+        }
     }
 
     /// Keeps hosted content pinned to the very top of the window. macOS

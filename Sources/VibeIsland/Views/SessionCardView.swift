@@ -172,10 +172,16 @@ struct SessionRowView: View {
     private var statusLine: some View {
         switch session.status {
         case .working:
+            // Changes on every tool call; without these the outgoing and
+            // incoming strings cross-fade on top of each other under the
+            // panel's spring animation and render as overlapping text.
             Text(activityText)
                 .font(.system(size: 10.5))
                 .foregroundStyle(SessionStatus.working.color)
                 .lineLimit(1)
+                .id(activityText)
+                .transition(.identity)
+                .animation(nil, value: activityText)
         case .done:
             Text("Done — click to jump")
                 .font(.system(size: 10.5, weight: .medium))
