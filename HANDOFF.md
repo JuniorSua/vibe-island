@@ -488,6 +488,27 @@ sessions.
   replaces the list entirely). Tooltips added to rows and the usage strip.
 - **Store pruning**: `SessionStore.prune()` caps history at 150 (it had grown
   to 594 in a week, bloating every save/parse).
+- **Top-edge gap — ARCHITECTURAL FIX (2026-08-17). Read this first.** After
+  ~27 accumulated patches the gap still recurred, and the diagnostics never
+  recorded a drift — proof the *design* was wrong, not the numbers. Old
+  design: SwiftUI, floating in a transparent window, had to *compute* where
+  the screen top is and draw black there; any inset/animation/layout blip =
+  gap. New design (NotchPanelController): (1) the window is
+  `NotchPanelController.overhang` (60 pt) taller than the visible island and
+  positioned so its top sits ABOVE the physical display — macOS clips the
+  overhang; (2) a pure-AppKit `backdrop` CAShapeLayer traces the island's
+  outline (from `PanelMetrics.islandFrame`) but is always extended to the
+  window's top, so opaque black exists from above the screen edge downward
+  before SwiftUI draws anything; (3) the NSHostingView is placed at the
+  BOTTOM of the container, `expandedSize.height` tall, so its own top edge is
+  exactly the screen edge and it never needs to know the edge exists. All
+  SwiftUI overdraw / negative-padding hacks were removed. Verified: 5/5
+  consecutive restart→expand cycles flush; request-takeover flush across the
+  full width; and `VibeNudge` shoving the window 40 pt down still measured
+  flush *immediately* (the overhang absorbed it) before the heartbeat
+  re-seated the window. The hairline stroke is masked 2 pt off the top edge
+  (its outer half otherwise reads as a bright line). The older layers below
+  are kept as history; the overhang+backdrop is the guarantee.
 - **Top-edge gap — DEFENCE IN DEPTH + evidence (2026-08-15).** The gap was
   reproduced live on a long-running instance (rows 0–8 bright ⇒ ~4.5 pt) while
   a freshly launched instance measured perfectly flush — i.e. it **degrades

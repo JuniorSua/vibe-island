@@ -145,11 +145,22 @@ final class NotchPanelController {
     /// near the screen edge has proven unreliable (macOS re-applies a safe-area
     /// inset at unpredictable times); this guarantees the island always meets
     /// the top no matter what SwiftUI does.
-    private let topGuard = NSView()
-    private let topGuardShape = CAShapeLayer()
     private var hoverCatcher: NSPanel?
 
     private let expandedSize = CGSize(width: 680, height: 460)
+
+    /// The window is deliberately taller than it needs to be and positioned so
+    /// this many points hang ABOVE the physical top of the display. macOS clips
+    /// the overhang. The black backdrop fills the whole window, so however the
+    /// content inside gets inset, shifted or animated, there is always opaque
+    /// black from above the screen edge downward — a top gap is impossible.
+    static let overhang: CGFloat = 60
+
+    /// Pure AppKit backdrop: a CAShapeLayer traced from the island's real
+    /// outline (published by SwiftUI) but ALWAYS extended to the window's top.
+    /// No layout, no animation, no SwiftUI involvement in the top edge.
+    private let backdrop = NSView()
+    private let backdropShape = CAShapeLayer()
 
     /// Prefer a display that is known to be notched (cached, so a misreporting
     /// moment can't send the island to another screen), then the built-in,
@@ -188,15 +199,30 @@ final class NotchPanelController {
         // island and the physical top. The island must be flush.
         hosting.safeAreaRegions = []
 
-        let container = NSView(frame: NSRect(origin: .zero, size: expandedSize))
-        hosting.frame = container.bounds
-        hosting.autoresizingMask = [.width, .height]
+        let containerSize = CGSize(width: expandedSize.width,
+                                   height: expandedSize.height + Self.overhang)
+        let container = NSView(frame: NSRect(origin: .zero, size: containerSize))
+        container.wantsLayer = true
+
+        // Backdrop first (bottom of the z-order), filled later from the
+        // island's reported outline. Its top always equals the window's top,
+        // which is above the screen.
+        backdrop.wantsLayer = true
+        backdrop.frame = container.bounds
+        backdrop.autoresizingMask = [.width, .height]
+        backdrop.layer?.addSublayer(backdropShape)
+        backdropShape.fillColor = NSColor.black.cgColor
+        backdropShape.isHidden = true
+        container.addSubview(backdrop)
+
+        // SwiftUI content occupies the on-screen part of the window only: it
+        // starts `overhang` below the window's top, i.e. exactly at the
+        // physical screen edge. It never has to know the edge exists.
+        hosting.frame = NSRect(x: 0, y: 0,
+                               width: containerSize.width,
+                               height: expandedSize.height)
+        hosting.autoresizingMask = [.width]
         container.addSubview(hosting)
-        topGuard.wantsLayer = true
-        topGuard.layer?.addSublayer(topGuardShape)
-        topGuardShape.fillColor = NSColor.black.cgColor
-        topGuard.isHidden = true
-        container.addSubview(topGuard)          // sits above the SwiftUI content
         panel.contentView = container
 
         NotchPanelController.shared = self
@@ -210,7 +236,7 @@ final class NotchPanelController {
             .sink { [weak self] _ in
                 DispatchQueue.main.async {
                     self?.updateVisibility()
-                    self?.updateTopGuard()
+                    self?.updateBackdrop()
                 }
             }
         setupHoverCatcher()
@@ -304,11 +330,12 @@ final class NotchPanelController {
         let screen = targetScreen
         metrics.update(for: screen)
         enforceTopFlush()
-        updateTopGuard()
+        updateBackdrop()
         layoutHoverCatcher()
 
         let width = max(expandedSize.width, metrics.notchWidth + 200)
-        let size = CGSize(width: width, height: expandedSize.height)
+        // Window is `overhang` taller; its top sits ABOVE the physical screen.
+        let size = CGSize(width: width, height: expandedSize.height + Self.overhang)
         // Anchor on the notch's true center (auxiliary areas can be slightly
         // asymmetric), falling back to the screen midpoint.
         var centerX = screen.frame.midX
@@ -321,11 +348,13 @@ final class NotchPanelController {
         // changes) is what dropped the panel below the menu bar and produced
         // the recurring gap above the island. The island is a notch overlay —
         // its top edge is the screen's top edge, unconditionally.
-        let y = screen.frame.maxY - size.height
+        // Bottom of the window = screen top − visible height; the extra
+        // `overhang` on top pokes past the screen edge and is clipped by macOS.
+        let y = screen.frame.maxY - expandedSize.height
         let frame = NSRect(x: x, y: y, width: size.width, height: size.height)
         if panel.frame != frame {
-            if panel.isVisible, abs(panel.frame.maxY - screen.frame.maxY) > 0.5 {
-                Diagnostics.log("correcting drifted panel top: was \(panel.frame.maxY), screen top \(screen.frame.maxY), screen \(screen.localizedName)")
+            if panel.isVisible, abs(panel.frame.maxY - (screen.frame.maxY + Self.overhang)) > 0.5 {
+                Diagnostics.log("correcting drifted panel: was maxY \(panel.frame.maxY), expected \(screen.frame.maxY + Self.overhang)")
             }
             panel.setFrame(frame, display: true, animate: false)
         }
@@ -356,8 +385,10 @@ final class NotchPanelController {
         let inWindow = panel.convertPoint(fromScreen: mouse)  // window coords
         // islandFrame is reported in SwiftUI "global" space = window space
         // with a top-left origin; flip to AppKit's bottom-left origin.
+        // hosting view is `expandedSize.height` tall at the bottom of the
+        // window; island coords are top-left within it.
         let flipped = CGRect(x: island.minX,
-                             y: panel.frame.height - island.maxY,
+                             y: expandedSize.height - island.maxY,
                              width: island.width, height: island.height)
         let over = flipped.insetBy(dx: -4, dy: -4).contains(inWindow)
         if panel.ignoresMouseEvents == over {
@@ -370,41 +401,50 @@ final class NotchPanelController {
     /// unpredictable moments — that inset is the recurring sliver of desktop
     /// above the island. We (a) clear it again and (b) publish whatever
     /// remains so the root view can cancel it with negative padding.
-    /// Cover the top edge of the island with a real AppKit view while it is
-    /// open. Width matches the island body exactly, and its top edge is the
-    /// window's top edge, so it is invisible when everything is behaving and a
-    /// silent repair when it isn't.
-    private func updateTopGuard() {
-        guard let container = panel.contentView else { return }
+    /// Rebuild the backdrop from the island's outline. Called on every store
+    /// change and heartbeat. The path: window-top edge (above the screen) →
+    /// straight down to where the visible island's flare wings begin → the
+    /// island's own outline. Hidden while collapsed (mascots only).
+    private func updateBackdrop() {
         let open = store.expanded && store.toast == nil
-        topGuard.isHidden = !open
-        guard open else { return }
-        let bodyWidth = metrics.islandFrame.width > 100
-            ? metrics.islandFrame.width
-            : max(560, metrics.notchWidth + 340)
-        let height: CGFloat = 20
-        topGuard.frame = NSRect(x: ((container.bounds.width - bodyWidth) / 2).rounded(),
-                                y: container.bounds.height - height,
-                                width: bodyWidth, height: height)
+        let island = metrics.islandFrame           // SwiftUI global = hosting coords, top-left origin
+        guard open, island.width > 100 else {
+            backdropShape.isHidden = true
+            return
+        }
+        backdropShape.isHidden = false
 
-        // Trace the island's own outline (full-width top edge, then the
-        // concave flare wings) so the guard is invisible rather than squaring
-        // off the swoop.
-        let tr: CGFloat = 26                      // must match NotchRootView.topRadius
-        let b = topGuard.bounds
+        let H = backdrop.bounds.height             // includes overhang
+        let hostH = expandedSize.height
+        // Convert island (top-left origin within hosting) → AppKit bottom-left
+        // origin within the container (hosting sits at the bottom).
+        let left = island.minX
+        let right = island.maxX
+        let bottom = hostH - island.maxY           // AppKit y of island bottom
+        let screenTop = hostH                      // AppKit y of the physical screen edge
+        let tr: CGFloat = 26                       // NotchRootView.topRadius (expanded)
+        let br: CGFloat = 32                       // NotchRootView.bottomRadius (expanded)
+
         let path = CGMutablePath()
-        path.move(to: CGPoint(x: b.minX, y: b.maxY))
-        path.addLine(to: CGPoint(x: b.maxX, y: b.maxY))
-        path.addQuadCurve(to: CGPoint(x: b.maxX - tr, y: b.maxY - tr),
-                          control: CGPoint(x: b.maxX - tr, y: b.maxY))
-        path.addLine(to: CGPoint(x: b.maxX - tr, y: b.minY))
-        path.addLine(to: CGPoint(x: b.minX + tr, y: b.minY))
-        path.addLine(to: CGPoint(x: b.minX + tr, y: b.maxY - tr))
-        path.addQuadCurve(to: CGPoint(x: b.minX, y: b.maxY),
-                          control: CGPoint(x: b.minX + tr, y: b.maxY))
+        // Above the screen: full island width, all the way to the window top.
+        path.move(to: CGPoint(x: left, y: H))
+        path.addLine(to: CGPoint(x: right, y: H))
+        path.addLine(to: CGPoint(x: right, y: screenTop))
+        // Right flare wing (concave), then body side, bottom corners, left side.
+        path.addQuadCurve(to: CGPoint(x: right - tr, y: screenTop - tr),
+                          control: CGPoint(x: right - tr, y: screenTop))
+        path.addLine(to: CGPoint(x: right - tr, y: bottom + br))
+        path.addQuadCurve(to: CGPoint(x: right - tr - br, y: bottom),
+                          control: CGPoint(x: right - tr, y: bottom))
+        path.addLine(to: CGPoint(x: left + tr + br, y: bottom))
+        path.addQuadCurve(to: CGPoint(x: left + tr, y: bottom + br),
+                          control: CGPoint(x: left + tr, y: bottom))
+        path.addLine(to: CGPoint(x: left + tr, y: screenTop - tr))
+        path.addQuadCurve(to: CGPoint(x: left, y: screenTop),
+                          control: CGPoint(x: left + tr, y: screenTop))
         path.closeSubpath()
-        topGuardShape.frame = b
-        topGuardShape.path = path
+        backdropShape.frame = backdrop.bounds
+        backdropShape.path = path
     }
 
     private func enforceTopFlush() {

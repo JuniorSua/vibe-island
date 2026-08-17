@@ -48,7 +48,9 @@ struct NotchRootView: View {
     /// anything above the window is harmlessly clipped by the window itself,
     /// but it must comfortably exceed any inset macOS applies to hosted
     /// content near the screen edge.
-    private var topOverdraw: CGFloat { showsBlackShape ? 40 : 0 }
+    /// The AppKit backdrop (NotchPanelController) owns the top edge now, so
+    /// SwiftUI draws only its on-screen body — no overdraw hacks required.
+    private var topOverdraw: CGFloat { 0 }
 
     private var shadowOpacity: Double {
         if isExpanded { return 0.55 }
@@ -122,6 +124,10 @@ struct NotchRootView: View {
                 NotchShape(bottomRadius: bottomRadius, topRadius: topRadius,
                            topOverdraw: topOverdraw)
                     .stroke(Color.white.opacity(isExpanded ? 0.14 : 0), lineWidth: 1)
+                    // Never let the hairline touch the screen edge: the stroke
+                    // straddles the path, so its outer half at the top edge
+                    // reads as a bright line where black should be.
+                    .mask(Rectangle().padding(.top, 2))
             )
             Spacer(minLength: 0)
         }
@@ -132,7 +138,6 @@ struct NotchRootView: View {
         // Cancel any safe-area inset macOS re-applies to hosted content near
         // the screen edge; without this the island floats a few points below
         // the top and shows a sliver of desktop (measured live at 4.5 pt).
-        .padding(.top, -metrics.contentInsetTop)
         .ignoresSafeArea(.all)
         // Watchdog: reliably collapse whenever nothing needs attention, the
         // mouse is outside the panel, and ~1s has passed since the last hover
