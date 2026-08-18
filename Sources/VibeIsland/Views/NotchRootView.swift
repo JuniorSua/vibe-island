@@ -9,6 +9,18 @@ struct NotchRootView: View {
     @State private var lastHoverChange = Date.distantPast
     @State private var lastExpand = Date.distantPast
     @State private var everHovered = false
+    /// Chat-bubble state (hover the mascot → glanceable task status).
+    @State private var bubbleVisible = false
+
+    /// The session whose mascot the bubble speaks for: waiting > working >
+    /// freshly done, matching how the mascot slot itself is chosen.
+    private var bubbleSession: Session? {
+        let live = store.activeSessions
+        return live.first { $0.status == .waiting }
+            ?? live.first { $0.status == .working }
+            ?? live.first { $0.status == .done && !$0.acknowledged }
+            ?? live.first
+    }
     /// STATIC on purpose: as an instance property this publisher was recreated
     /// on every SwiftUI rebuild, so its 1s countdown restarted constantly and
     /// the collapse watchdog effectively never fired.
@@ -139,6 +151,21 @@ struct NotchRootView: View {
         // the screen edge; without this the island floats a few points below
         // the top and shows a sliver of desktop (measured live at 4.5 pt).
         .ignoresSafeArea(.all)
+        // Chat bubble: hover the mascot → a small popup speaking for the
+        // current task. Positioned so its tail points up at the mascot. Never
+        // shown while the full panel or a toast is up. Display-only, so it
+        // never intercepts clicks.
+        .overlay(alignment: .topLeading) {
+            if (bubbleVisible || store.debugForceBubble), !isExpanded, !showsToast,
+               metrics.mascotFrame.width > 0, let s = bubbleSession {
+                SpeechBubbleView(session: s)
+                    .offset(x: metrics.mascotFrame.midX - 132,
+                            y: metrics.mascotFrame.maxY + 1)
+                    .allowsHitTesting(false)
+                    .transition(.opacity.combined(with: .scale(scale: 0.94, anchor: .top)))
+            }
+        }
+        .animation(.spring(response: 0.28, dampingFraction: 0.82), value: bubbleVisible)
         // Watchdog: reliably collapse whenever nothing needs attention, the
         // mouse is outside the panel, and ~1s has passed since the last hover
         // change. Clicking inside the expanded panel keeps `hovering` true,
@@ -179,24 +206,16 @@ struct NotchRootView: View {
         hovering = over
         lastHoverChange = Date()
         if over {
-            everHovered = true
+            // Hover no longer enlarges the island. After a short dwell it shows
+            // the chat bubble for the current task; the full panel is a click
+            // or ⌥⌘I away (and still auto-opens for approvals/questions).
             if store.expanded { return }
-            // Dwell before opening: passing through the strip on the way to a
-            // menu-bar item or window control must not pop the panel. The
-            // pointer has to still be there after the delay.
             let armedAt = lastHoverChange
-            DispatchQueue.main.asyncAfter(deadline: .now() + HoverTuning.openDelay) {
-                if hovering, lastHoverChange == armedAt, store.toast == nil {
-                    store.expanded = true
-                }
+            DispatchQueue.main.asyncAfter(deadline: .now() + HoverTuning.bubbleDelay) {
+                if hovering, lastHoverChange == armedAt { bubbleVisible = true }
             }
         } else {
-            // Snappy on mouse-out, but a request you're deciding on shouldn't
-            // vanish the instant the pointer drifts off it.
-            let delay: TimeInterval = store.attentionCount > 0 ? 1.5 : 0.2
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                if !hovering, store.expanded { store.expanded = false }
-            }
+            bubbleVisible = false
         }
     }
 }
@@ -206,6 +225,8 @@ struct NotchRootView: View {
 /// a dwell delay so a pointer merely passing by on its way to a window control
 /// never opens the panel.
 enum HoverTuning {
+    /// Dwell before the chat bubble appears on mascot hover.
+    static let bubbleDelay: TimeInterval = 0.22
     /// Height of the collapsed hover strip, measured from the screen top.
     /// The notch is 32 pt tall; this keeps the trigger inside its upper part.
     static let stripHeight: CGFloat = 20
@@ -370,6 +391,13 @@ struct MascotBarView: View {
                         slotView(claude, isCodex: false)
                         slotView(codex, isCodex: true)
                     }
+                    .background(GeometryReader { geo in
+                        Color.clear
+                            .onAppear { metrics.mascotFrame = geo.frame(in: .global) }
+                            .onChange(of: geo.frame(in: .global)) { _, f in
+                                metrics.mascotFrame = f
+                            }
+                    })
                 }
                 .frame(height: max(metrics.notchHeight, 24))
                 // Mascots draw at full height, but only the strip along the

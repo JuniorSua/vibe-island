@@ -39,6 +39,11 @@ final class EventHandler {
         }
         // Exact replica of the hover path: expand WITHOUT re-laying out or
         // keying the window, so tests exercise what the mouse actually does.
+        if p.hook_event_name == "VibeBubble" {
+            store.debugForceBubble.toggle()
+            reply("{}")
+            return
+        }
         if p.hook_event_name == "VibeHover" {
             store.expanded = true
             NotchPanelController.shared?.logGeometry(tag: "hover-expand")

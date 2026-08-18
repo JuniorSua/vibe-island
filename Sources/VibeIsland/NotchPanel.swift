@@ -18,6 +18,9 @@ final class PanelMetrics: ObservableObject {
     /// The island's actual on-screen frame, reported by SwiftUI so the AppKit
     /// top-guard can match it exactly instead of guessing.
     @Published var islandFrame: CGRect = .zero
+    /// Global frame of the walking-mascot cluster, so the chat bubble can point
+    /// its tail up at the exact logo the user is hovering.
+    @Published var mascotFrame: CGRect = .zero
     var hasNotch: Bool { notchWidth > 0 }
 
     /// Last good reading per display. `auxiliaryTopLeftArea` / `safeAreaInsets`
