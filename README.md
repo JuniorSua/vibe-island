@@ -47,7 +47,8 @@ Ghostty, Warp, kitty, Alacritty, VS Code, Cursor, Zed and others).
 
 | | |
 |---|---|
-| Open / close | Hover the notch or the mascots · **⌥⌘I** from anywhere · **Esc** to dismiss |
+| Peek a task | **Hover the walking mascot** → a chat bubble with the task + live status |
+| Open the full panel | Click the mascot · **⌥⌘I** from anywhere · auto-opens for approvals/questions · **Esc** to dismiss |
 | Jump to a session | Click its row · **⌘1–⌘9** |
 | See recent tool calls | Click **“N steps”** on a row |
 | Settings | Right-click the island (or the menu bar icon) |
