@@ -23,7 +23,8 @@ Requires macOS 14+. Plain SwiftPM, no Xcode project.
 processes to their transcripts. Each session shows its prompt, live activity,
 model, project and elapsed time.
 
-**Answers for you.** When an agent needs input, the island expands in place:
+**Answers for you.** When an agent needs input, a small popup appears under
+its mascot — the island never expands on its own:
 
 | Request | What you get |
 |---|---|
@@ -47,8 +48,9 @@ Ghostty, Warp, kitty, Alacritty, VS Code, Cursor, Zed and others).
 
 | | |
 |---|---|
-| Peek a task | **Hover the walking mascot** → a chat bubble with the task + live status |
-| Open the full panel | Click the mascot · **⌥⌘I** from anywhere · auto-opens for approvals/questions · **Esc** to dismiss |
+| Peek a task | **Hover the walking mascot** → a popup with the task + live status |
+| Answer a question | Click an option in the popup, or **⌘1–⌘9** |
+| Open the full session list | Click the mascot · **⌥⌘I** from anywhere · **Esc** to dismiss |
 | Jump to a session | Click its row · **⌘1–⌘9** |
 | See recent tool calls | Click **“N steps”** on a row |
 | Settings | Right-click the island (or the menu bar icon) |

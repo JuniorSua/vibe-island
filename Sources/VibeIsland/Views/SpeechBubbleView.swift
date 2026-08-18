@@ -8,6 +8,7 @@ import SwiftUI
 /// and the full panel — needed for approvals/questions — is a separate click /
 /// ⌥⌘I away.
 struct SpeechBubbleView: View {
+    @EnvironmentObject var store: SessionStore
     let session: Session
     /// Answer callback: (hook JSON response, toast to flash). Present only when
     /// the agent is asking something, which is also when the popup accepts
@@ -39,6 +40,25 @@ struct SpeechBubbleView: View {
                 avatar
                     .frame(width: 26, height: 22)
 
+                if let req = session.pendingRequest, onAnswer != nil {
+                    // An agent is asking: the popup IS the question card.
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 5) {
+                            Text(askHeadline(req))
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundStyle(Self.teal)
+                            Spacer(minLength: 0)
+                            Text("waiting \(waitLabel(req))")
+                                .font(.system(size: 8.5, design: .monospaced))
+                                .foregroundStyle(.white.opacity(0.35))
+                        }
+                        Text(askBody(req))
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.95))
+                            .fixedSize(horizontal: false, vertical: true)
+                        answerControls(req)
+                    }
+                } else {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 5) {
                         Text(session.agent.displayName)
@@ -67,15 +87,12 @@ struct SpeechBubbleView: View {
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
 
-                    if let req = session.pendingRequest, onAnswer != nil {
-                        answerControls(req)
-                            .padding(.top, 4)
-                    }
+                }
                 }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
-            .frame(width: 264, alignment: .leading)
+            .frame(width: session.pendingRequest != nil ? 320 : 264, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .fill(Color(white: 0.11))
@@ -189,6 +206,30 @@ struct SpeechBubbleView: View {
         """
         {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":\(RequestView.jsonString(reason))}}
         """
+    }
+
+    private func askHeadline(_ req: PendingRequest) -> String {
+        switch req.kind {
+        case .question:   return "\(session.agent.displayName) asks"
+        case .permission: return "\(session.agent.displayName) needs permission"
+        case .plan:       return "\(session.agent.displayName) has a plan"
+        }
+    }
+
+    private func askBody(_ req: PendingRequest) -> String {
+        switch req.kind {
+        case .question:   return req.body.isEmpty ? req.title : req.body
+        case .permission: return req.title
+        case .plan:       return "Plan ready for review"
+        }
+    }
+
+    private func waitLabel(_ req: PendingRequest) -> String {
+        _ = store.tick
+        let s = Int(Date().timeIntervalSince(req.createdAt))
+        if s < 60 { return "\(max(s, 1))s" }
+        if s < 3600 { return "\(s / 60)m" }
+        return "\(s / 3600)h"
     }
 
     private func verb(_ e: ActivityEntry) -> String {

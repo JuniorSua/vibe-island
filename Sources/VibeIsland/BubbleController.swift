@@ -30,6 +30,16 @@ final class BubbleController {
     private var shown = false
     /// While set, pointer-based hiding is suspended (debug screenshots only).
     private var debugUntil: Date?
+    /// A session whose question/approval is showing. The popup stays put while
+    /// the agent is blocked waiting — it does not follow the pointer — but a
+    /// click elsewhere tucks it away to the pulsing mascot (hover to return).
+    private var stickySession: String?
+    /// When the current sticky popup should tuck itself away. A pending
+    /// question must never camp on screen: after this it hides and the mascot
+    /// pulses orange instead — hover it to bring the options straight back.
+    private var stickyUntil: Date?
+    /// How long a request's popup stays up before tucking away.
+    private let stickyLinger: TimeInterval = 15
 
     /// Pointer must rest on the mascot this long before the popup appears.
     private let dwell: TimeInterval = 0.18
@@ -67,7 +77,12 @@ final class BubbleController {
         clickMonitor = NSEvent.addGlobalMonitorForEvents(
             matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
         ) { [weak self] _ in
-            Task { @MainActor in self?.hide() }
+            Task { @MainActor in
+                // Clicking away tucks a pending request back to the mascot;
+                // hovering the mascot brings the options straight back.
+                self?.stickySession = nil
+                self?.hide()
+            }
         }
     }
 
@@ -80,6 +95,31 @@ final class BubbleController {
             hide()
             return
         }
+        // A pending request pins the popup open (the agent is blocked on it).
+        if let id = stickySession {
+            guard let session = store.session(id: id), session.pendingRequest != nil,
+                  let mascot = NotchPanelController.shared?.mascotScreenRect() else {
+                stickySession = nil
+                stickyUntil = nil
+                hide()
+                return
+            }
+            let mouse = NSEvent.mouseLocation
+            let engaged = panel.frame.insetBy(dx: -6, dy: -6).contains(mouse)
+                || mascot.insetBy(dx: -6, dy: -6).contains(mouse)
+            if engaged {
+                stickyUntil = Date().addingTimeInterval(stickyLinger)   // you're looking at it
+            } else if let until = stickyUntil, Date() > until {
+                // Tuck away; the request stays pending and the mascot pulses.
+                stickySession = nil
+                stickyUntil = nil
+                hide()
+                return
+            }
+            if shown { refresh(session: session, under: mascot) }
+            return
+        }
+
         guard let mascot = NotchPanelController.shared?.mascotScreenRect(),
               let session = bubbleSession,
               !store.expanded, store.toast == nil else {
@@ -96,6 +136,9 @@ final class BubbleController {
             leftAt = nil
             if enteredAt == nil { enteredAt = Date() }
             if !shown, Date().timeIntervalSince(enteredAt!) >= dwell {
+                // Hovering a waiting agent restores its question, answerable.
+                if session.pendingRequest != nil { stickySession = session.id
+                                                   stickyUntil = Date().addingTimeInterval(stickyLinger) }
                 show(session: session, under: mascot)
             } else if shown {
                 refresh(session: session, under: mascot)
@@ -138,6 +181,7 @@ final class BubbleController {
         hosting.rootView = AnyView(
             SpeechBubbleView(session: session) { [weak self] json, toast in
                 guard let self else { return }
+                self.stickySession = nil
                 self.store.resolve(sessionID: session.id, response: json)
                 self.store.showToast(toast)
                 self.hide()
@@ -165,6 +209,24 @@ final class BubbleController {
         leftAt = nil
         panel.ignoresMouseEvents = true
         panel.orderOut(nil)
+    }
+
+    /// An agent is asking something: show the popup and keep it up until the
+    /// question is answered (or the user clicks away). This replaces the old
+    /// behaviour of expanding the whole island.
+    func showRequest(sessionID: String) {
+        guard let session = store.session(id: sessionID) else { return }
+        stickySession = sessionID
+        stickyUntil = Date().addingTimeInterval(stickyLinger)
+        guard let mascot = NotchPanelController.shared?.mascotScreenRect() else {
+            // Mascot not laid out yet (session just appeared) — retry shortly.
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 400_000_000)
+                if self.stickySession == sessionID { self.showRequest(sessionID: sessionID) }
+            }
+            return
+        }
+        show(session: session, under: mascot)
     }
 
     /// Debug/testing: show it without a pointer, self-expiring.

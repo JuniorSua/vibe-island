@@ -178,9 +178,10 @@ final class EventHandler {
             s.status = .waiting
             s.pendingRequest = request
         }
-        store.expanded = true
+        // The island NEVER expands on its own. Requests are answered in the
+        // small "Claude asks" popup beside the mascot.
         SoundEngine.shared.play(request.kind == .question ? .question : .needsAttention)
-        NotchPanelController.shared?.showForAttention()
+        BubbleController.shared?.showRequest(sessionID: sessionID)
     }
 
     // MARK: - Session bootstrap
