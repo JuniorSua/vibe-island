@@ -473,6 +473,30 @@ final class NotchPanelController {
         _ = view
     }
 
+    /// The mascot's rect in SCREEN coordinates.
+    ///
+    /// SwiftUI reports `mascotFrame` in the hosting view's space (top-left
+    /// origin). The hosting view sits at the BOTTOM of a container that is
+    /// `overhang` points taller than the screen area, so using those numbers
+    /// directly — as the old in-window bubble did — drew the popup `overhang`
+    /// points too low. Convert properly: flip Y, then hosting → window →
+    /// screen.
+    func mascotScreenRect() -> CGRect? {
+        guard let hosting = hostingView else { return nil }
+        let r = metrics.mascotFrame
+        guard r.width > 4, r.height > 4 else { return nil }
+        // NSHostingView is a FLIPPED view (top-left origin), so SwiftUI's
+        // rect is already in its coordinate space — flipping by hand here
+        // double-flips and throws the popup hundreds of points down the
+        // screen. Only flip if the host is not flipped.
+        let inHosting = hosting.isFlipped
+            ? r
+            : NSRect(x: r.minX, y: hosting.bounds.height - r.maxY,
+                     width: r.width, height: r.height)
+        let inWindow = hosting.convert(inHosting, to: nil)
+        return panel.convertToScreen(inWindow)
+    }
+
     /// Test-only: displace the panel so the heartbeat's correction can be
     /// observed (simulates the drift seen after sleep/display changes).
     func nudgeForTesting(down: CGFloat) {

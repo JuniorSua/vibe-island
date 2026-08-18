@@ -7,8 +7,6 @@ final class SessionStore: ObservableObject {
 
     @Published private(set) var sessions: [Session] = []
     @Published var expanded: Bool = false
-    /// Debug-only: force the hover chat bubble on for a screenshot test.
-    @Published var debugForceBubble: Bool = false
 
     /// Bumped every 30s so time-based UI (elapsed labels, done-session expiry)
     /// re-evaluates even when no events arrive.

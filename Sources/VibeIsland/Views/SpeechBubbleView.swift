@@ -9,6 +9,12 @@ import SwiftUI
 /// ⌥⌘I away.
 struct SpeechBubbleView: View {
     let session: Session
+    /// Answer callback: (hook JSON response, toast to flash). Present only when
+    /// the agent is asking something, which is also when the popup accepts
+    /// clicks — otherwise it is pure information and click-through.
+    var onAnswer: ((String, SessionStore.Toast) -> Void)? = nil
+
+    static let teal = Color(red: 0.28, green: 0.87, blue: 0.74)
 
     private var accent: Color {
         switch session.status {
@@ -60,6 +66,11 @@ struct SpeechBubbleView: View {
                         .foregroundStyle(accent.opacity(0.9))
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
+
+                    if let req = session.pendingRequest, onAnswer != nil {
+                        answerControls(req)
+                            .padding(.top, 4)
+                    }
                 }
             }
             .padding(.horizontal, 12)
@@ -106,6 +117,78 @@ struct SpeechBubbleView: View {
         case .ended:
             return "Ended"
         }
+    }
+
+    /// One-click answers, right in the popup.
+    @ViewBuilder
+    private func answerControls(_ req: PendingRequest) -> some View {
+        switch req.kind {
+        case .question:
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(Array(req.options.prefix(4).enumerated()), id: \.offset) { i, option in
+                    Button {
+                        answer(option)
+                    } label: {
+                        HStack(spacing: 6) {
+                            Text("⌘\(i + 1)")
+                                .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                                .foregroundStyle(Self.teal)
+                            Text(option)
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(.white.opacity(0.95))
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .background(RoundedRectangle(cornerRadius: 7).fill(Self.teal.opacity(0.12)))
+                        .overlay(RoundedRectangle(cornerRadius: 7)
+                            .stroke(Self.teal.opacity(0.35), lineWidth: 1))
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        case .permission:
+            HStack(spacing: 6) {
+                Button { deny() } label: {
+                    Text("Deny").font(.system(size: 11, weight: .semibold))
+                        .frame(maxWidth: .infinity).padding(.vertical, 5)
+                }
+                .buttonStyle(DarkButtonStyle())
+                Button { allow() } label: {
+                    Text("Allow").font(.system(size: 11, weight: .semibold))
+                        .frame(maxWidth: .infinity).padding(.vertical, 5)
+                }
+                .buttonStyle(LightButtonStyle())
+            }
+        case .plan:
+            Text("Press ⌥⌘I to review the plan")
+                .font(.system(size: 10))
+                .foregroundStyle(.white.opacity(0.45))
+        }
+    }
+
+    private func answer(_ option: String) {
+        let reason = "User answered via Vibe Island: \"\(option)\". Proceed with this choice; do not re-ask."
+        onAnswer?(denyJSON(reason),
+                  .init(symbol: "checkmark", text: option, color: .green))
+    }
+
+    private func allow() {
+        onAnswer?("""
+        {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow","permissionDecisionReason":"Approved from Vibe Island"}}
+        """, .init(symbol: "checkmark", text: "Allowed", color: .green))
+    }
+
+    private func deny() {
+        onAnswer?(denyJSON("User denied this action from Vibe Island."),
+                  .init(symbol: "xmark", text: "Denied", color: .red))
+    }
+
+    private func denyJSON(_ reason: String) -> String {
+        """
+        {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":\(RequestView.jsonString(reason))}}
+        """
     }
 
     private func verb(_ e: ActivityEntry) -> String {

@@ -9,18 +9,6 @@ struct NotchRootView: View {
     @State private var lastHoverChange = Date.distantPast
     @State private var lastExpand = Date.distantPast
     @State private var everHovered = false
-    /// Chat-bubble state (hover the mascot → glanceable task status).
-    @State private var bubbleVisible = false
-
-    /// The session whose mascot the bubble speaks for: waiting > working >
-    /// freshly done, matching how the mascot slot itself is chosen.
-    private var bubbleSession: Session? {
-        let live = store.activeSessions
-        return live.first { $0.status == .waiting }
-            ?? live.first { $0.status == .working }
-            ?? live.first { $0.status == .done && !$0.acknowledged }
-            ?? live.first
-    }
     /// STATIC on purpose: as an instance property this publisher was recreated
     /// on every SwiftUI rebuild, so its 1s countdown restarted constantly and
     /// the collapse watchdog effectively never fired.
@@ -147,25 +135,11 @@ struct NotchRootView: View {
         // NSHostingView left-aligns an undersized root, which pushed the
         // island off the notch.
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .coordinateSpace(name: "islandRoot")
         // Cancel any safe-area inset macOS re-applies to hosted content near
         // the screen edge; without this the island floats a few points below
         // the top and shows a sliver of desktop (measured live at 4.5 pt).
         .ignoresSafeArea(.all)
-        // Chat bubble: hover the mascot → a small popup speaking for the
-        // current task. Positioned so its tail points up at the mascot. Never
-        // shown while the full panel or a toast is up. Display-only, so it
-        // never intercepts clicks.
-        .overlay(alignment: .topLeading) {
-            if (bubbleVisible || store.debugForceBubble), !isExpanded, !showsToast,
-               metrics.mascotFrame.width > 0, let s = bubbleSession {
-                SpeechBubbleView(session: s)
-                    .offset(x: metrics.mascotFrame.midX - 132,
-                            y: metrics.mascotFrame.maxY + 1)
-                    .allowsHitTesting(false)
-                    .transition(.opacity.combined(with: .scale(scale: 0.94, anchor: .top)))
-            }
-        }
-        .animation(.spring(response: 0.28, dampingFraction: 0.82), value: bubbleVisible)
         // Watchdog: reliably collapse whenever nothing needs attention, the
         // mouse is outside the panel, and ~1s has passed since the last hover
         // change. Clicking inside the expanded panel keeps `hovering` true,
@@ -175,9 +149,6 @@ struct NotchRootView: View {
                 lastExpand = Date()
                 everHovered = false
             }
-            // State transitions invalidate any armed/visible bubble — it may
-            // only ever appear from a fresh hover on the mascot itself.
-            bubbleVisible = false
         }
         // Fallback watchdog for panels opened without the mouse (menu item /
         // attention): those keep a grace period so they aren't yanked shut
@@ -205,21 +176,12 @@ struct NotchRootView: View {
 
     /// Shared hover handler: entering visible content expands (or keeps the
     /// panel open); leaving snaps it shut after a tiny debounce.
+    /// The popup is owned by BubbleController (its own window, pointer-polled),
+    /// so hover here only tracks state for the panel's collapse watchdog.
     private func handleHover(_ over: Bool) {
         hovering = over
         lastHoverChange = Date()
-        if over {
-            // Hover no longer enlarges the island. After a short dwell it shows
-            // the chat bubble for the current task; the full panel is a click
-            // or ⌥⌘I away (and still auto-opens for approvals/questions).
-            if store.expanded { return }
-            let armedAt = lastHoverChange
-            DispatchQueue.main.asyncAfter(deadline: .now() + HoverTuning.bubbleDelay) {
-                if hovering, lastHoverChange == armedAt { bubbleVisible = true }
-            }
-        } else {
-            bubbleVisible = false
-        }
+        if over { everHovered = true }
     }
 }
 
@@ -396,8 +358,8 @@ struct MascotBarView: View {
                     }
                     .background(GeometryReader { geo in
                         Color.clear
-                            .onAppear { metrics.mascotFrame = geo.frame(in: .global) }
-                            .onChange(of: geo.frame(in: .global)) { _, f in
+                            .onAppear { metrics.mascotFrame = geo.frame(in: .named("islandRoot")) }
+                            .onChange(of: geo.frame(in: .named("islandRoot"))) { _, f in
                                 metrics.mascotFrame = f
                             }
                     })

@@ -6,6 +6,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var panelController: NotchPanelController!
     private let eventServer = EventServer()
     private var badgeTimer: Timer?
+    private var bubbleController: BubbleController?
     private var statusHeaderItem: NSMenuItem!
 
     private static let petIDs = ["codex", "dewey", "fireball", "rocky",
@@ -17,6 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setupStatusItem()
         UsageMonitor.shared.start()
         CodexWatcher.shared.start()
+        bubbleController = BubbleController()
         offerHookInstallIfNeeded()
 
         // ⌥⌘I peeks the panel from anywhere — the island is invisible when
