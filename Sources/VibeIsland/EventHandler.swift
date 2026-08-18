@@ -40,7 +40,14 @@ final class EventHandler {
         // Exact replica of the hover path: expand WITHOUT re-laying out or
         // keying the window, so tests exercise what the mouse actually does.
         if p.hook_event_name == "VibeBubble" {
-            store.debugForceBubble.toggle()
+            // Timed, never a toggle: a test that forgets to turn it off must
+            // not leave the bubble permanently stuck on screen (that exact
+            // mistake shipped once — the bubble sat over the user's UI).
+            store.debugForceBubble = true
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                store.debugForceBubble = false
+            }
             reply("{}")
             return
         }

@@ -263,6 +263,10 @@ final class NotchPanelController {
         let view = HoverCatcherView()
         view.onEnter = { [weak self] in
             guard let self else { return }
+            // Idle-only: when mascots are on screen, hovering the notch must
+            // do nothing — the bubble belongs to the mascot, and the full
+            // panel opens by click / hotkey / an actual request.
+            guard self.store.activeSessions.isEmpty else { return }
             self.store.expanded = true
             self.updateVisibility()
         }

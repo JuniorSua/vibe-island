@@ -175,6 +175,9 @@ struct NotchRootView: View {
                 lastExpand = Date()
                 everHovered = false
             }
+            // State transitions invalidate any armed/visible bubble — it may
+            // only ever appear from a fresh hover on the mascot itself.
+            bubbleVisible = false
         }
         // Fallback watchdog for panels opened without the mouse (menu item /
         // attention): those keep a grace period so they aren't yanked shut
@@ -398,6 +401,13 @@ struct MascotBarView: View {
                                 metrics.mascotFrame = f
                             }
                     })
+                    // The chat bubble triggers ONLY here — on the little
+                    // walking AI itself, full mascot height, not the notch
+                    // strip. Slight padding so the target isn't pixel-perfect.
+                    .contentShape(Rectangle())
+                    .padding(4)
+                    .contentShape(Rectangle())
+                    .onHover(perform: onHover)
                 }
                 .frame(height: max(metrics.notchHeight, 24))
                 // Mascots draw at full height, but only the strip along the
@@ -407,10 +417,9 @@ struct MascotBarView: View {
                     x: 0, y: 0,
                     width: 100_000,
                     height: HoverTuning.stripHeight)))
-                .onHover(perform: onHover)
                 .onTapGesture { store.expanded = true }
                 .contextMenu { IslandContextMenu() }
-                .help("Vibe Island — click to open, right-click for settings")
+                .help("Vibe Island — hover the mascot for status, click to open")
             }
             .fixedSize()
         }
