@@ -189,6 +189,18 @@ struct NotchRootView: View {
 /// short trigger strip hugging the notch (not the whole menu-bar height) plus
 /// a dwell delay so a pointer merely passing by on its way to a window control
 /// never opens the panel.
+/// Where the walking mascot sits relative to the notch.
+enum MascotLayout {
+    /// Clear space between the mascot's section and the notch edge. Kept
+    /// small on purpose: app menu titles grow from the far left toward the
+    /// notch, so hugging the notch is what keeps the mascot clear of them.
+    static let gapFromNotch: CGFloat = 6
+    /// Breathing room around the mascot so it isn't crowded by menu-bar icons.
+    static let sidePadding: CGFloat = 4
+    /// The mascot art is top-heavy; nudge it down to look centred.
+    static let opticalNudge: CGFloat = 2
+}
+
 enum HoverTuning {
     /// Dwell before the chat bubble appears on mascot hover.
     static let bubbleDelay: TimeInterval = 0.22
@@ -337,25 +349,27 @@ struct MascotBarView: View {
         } else {
             let slotsWidth = width(claude) + width(codex)
                 + (claude != .none && codex != .none ? 8 : 0)
-            let notchZone = metrics.hasNotch ? metrics.notchWidth + 10 : 0
-            // Layout-based positioning (an .offset would escape the container's
-            // clip): a leading spacer sized so the hover zone starts at the
-            // notch's left edge once the whole group is centered.
+            let gap: CGFloat = MascotLayout.gapFromNotch
+            let notchZone = metrics.hasNotch ? metrics.notchWidth : 0
+            // Mascots live on the LEFT of the notch: the right side of the
+            // menu bar is crowded with status items, the left is open.
+            //
+            // Layout-based positioning (an .offset would escape the
+            // container's clip). Mirror of the old right-side layout: with a
+            // TRAILING spacer of `slotsWidth + gap`, centring the whole group
+            // on the notch lands the mascots' right edge exactly `gap` points
+            // left of the notch's left edge.
             HStack(spacing: 0) {
-                if metrics.hasNotch {
-                    Color.clear.frame(width: slotsWidth + 10, height: 1)
-                }
                 HStack(spacing: 0) {
-                    // Hovering the notch itself counts — that's what people
-                    // aim at — but the transparent area beyond this zone
-                    // stays inert.
-                    if notchZone > 0 {
-                        Color.clear.frame(width: notchZone)
-                    }
                     HStack(spacing: 8) {
                         slotView(claude, isCodex: false)
                         slotView(codex, isCodex: true)
                     }
+                    // Its own little section: padding keeps it clear of
+                    // neighbouring menu-bar icons instead of butting against
+                    // them, and the tiny nudge optically centres the mascot.
+                    .padding(.horizontal, MascotLayout.sidePadding)
+                    .padding(.top, MascotLayout.opticalNudge)
                     .background(GeometryReader { geo in
                         Color.clear
                             .onAppear { metrics.mascotFrame = geo.frame(in: .named("islandRoot")) }
@@ -363,18 +377,17 @@ struct MascotBarView: View {
                                 metrics.mascotFrame = f
                             }
                     })
-                    // The chat bubble triggers ONLY here — on the little
-                    // walking AI itself, full mascot height, not the notch
-                    // strip. Slight padding so the target isn't pixel-perfect.
-                    .contentShape(Rectangle())
-                    .padding(4)
+                    // The popup triggers ONLY on the little walking AI itself.
                     .contentShape(Rectangle())
                     .onHover(perform: onHover)
+
+                    if metrics.hasNotch {
+                        Color.clear.frame(width: gap + notchZone, height: 1)
+                    }
                 }
                 .frame(height: max(metrics.notchHeight, 24))
-                // Mascots draw at full height, but only the strip along the
-                // very top is a hover target — the lower part of the notch
-                // area stays inert so nearby controls remain clickable.
+                // Only the strip along the very top is clickable, so controls
+                // just below the menu bar stay usable.
                 .contentShape(Rectangle().path(in: CGRect(
                     x: 0, y: 0,
                     width: 100_000,
@@ -382,6 +395,11 @@ struct MascotBarView: View {
                 .onTapGesture { store.expanded = true }
                 .contextMenu { IslandContextMenu() }
                 .help("Vibe Island — hover the mascot for status, click to open")
+
+                if metrics.hasNotch {
+                    Color.clear.frame(width: slotsWidth + 2 * MascotLayout.sidePadding + gap,
+                                      height: 1)
+                }
             }
             .fixedSize()
         }
