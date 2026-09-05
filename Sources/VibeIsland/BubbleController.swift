@@ -89,6 +89,11 @@ final class BubbleController {
     // MARK: - Per-tick decision
 
     private func tick() {
+        // Idle early-out: with nothing shown, nothing pending and no active
+        // sessions there is nothing to poll for — keep the 20Hz timer's work
+        // at effectively zero.
+        if !shown, stickySession == nil, debugUntil == nil,
+           store.activeSessions.isEmpty { return }
         if let until = debugUntil {
             if Date() < until { return }        // leave the debug flash alone
             debugUntil = nil

@@ -49,7 +49,9 @@ struct CrabView: View {
     var body: some View {
         Group {
             if animating {
-                TimelineView(.periodic(from: .now, by: 0.1)) { ctx in
+                // Frames only change ~3x/sec (walk step every 0.4s); redrawing
+                // at 10fps tripled the app's CPU for identical pixels.
+                TimelineView(.periodic(from: .now, by: 0.3)) { ctx in
                     canvas(t: ctx.date.timeIntervalSince1970)
                 }
             } else {
