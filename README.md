@@ -12,6 +12,8 @@ network calls, no accounts, no telemetry.
 swift build && ./scripts/make-app.sh    # → /Applications/VibeIsland.app
 ```
 
+./scripts/install-autostart.sh   # start at login + restart if it ever dies
+
 Requires macOS 14+. Plain SwiftPM, no Xcode project.
 
 ---
