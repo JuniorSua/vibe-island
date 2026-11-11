@@ -42,13 +42,14 @@ enum MascotKit {
 // MARK: - Claude crab (walking block-character mascot)
 
 struct CrabView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var animating: Bool
     var scale: CGFloat = 1.0
     var tint: Color = MascotKit.claudeOrange
 
     var body: some View {
         Group {
-            if animating {
+            if animating && !reduceMotion {
                 // Frames only change ~3x/sec (walk step every 0.4s); redrawing
                 // at 10fps tripled the app's CPU for identical pixels.
                 TimelineView(.periodic(from: .now, by: 0.3)) { ctx in
@@ -139,12 +140,13 @@ enum PetStore {
 }
 
 struct PetSpriteView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var animating: Bool
     var height: CGFloat = 26
 
     var body: some View {
         Group {
-            if animating {
+            if animating && !reduceMotion {
                 TimelineView(.periodic(from: .now, by: 0.12)) { ctx in
                     frameImage(at: ctx.date)
                 }
@@ -158,7 +160,8 @@ struct PetSpriteView: View {
     private func frameImage(at date: Date?) -> some View {
         let frames = PetStore.frames(for: PetStore.currentPetID())
         if frames.isEmpty {
-            CrabView(animating: animating, tint: AgentKind.codex.brandColor)
+            PixelBotView(color: AgentKind.codex.brandColor, animating: animating && !reduceMotion)
+                .frame(width: 30, height: height)
         } else {
             let idx = date.map { Int($0.timeIntervalSince1970 / 0.12) % frames.count } ?? 0
             Image(nsImage: frames[idx])
@@ -264,5 +267,29 @@ struct DitherSeparatorView: View {
             }
         }
         .frame(height: 3)
+    }
+}
+
+/// Brand identity is shared by the notch, session rows and hover popup.
+struct AgentMascotView: View {
+    var agent: AgentKind
+    var animating: Bool
+    var height: CGFloat = 24
+    var waiting: Bool = false
+
+    var body: some View {
+        Group {
+            switch agent {
+            case .claudeCode:
+                CrabView(animating: animating, scale: min(height / 21, 1),
+                         tint: waiting ? SessionStatus.waiting.color : MascotKit.claudeOrange)
+            case .codex:
+                PetSpriteView(animating: animating, height: height)
+            default:
+                PixelBotView(color: agent.brandColor, animating: animating)
+            }
+        }
+        .frame(width: 30, height: height)
+        .accessibilityLabel(agent.displayName)
     }
 }

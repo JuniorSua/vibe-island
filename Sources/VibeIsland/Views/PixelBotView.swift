@@ -3,6 +3,7 @@ import SwiftUI
 /// Tiny pixel-art robot mascot, tinted by session status, with subtle frame
 /// animation while the agent is working (blink + antenna flicker).
 struct PixelBotView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var color: Color
     var animating: Bool
 
@@ -31,10 +32,11 @@ struct PixelBotView: View {
     ]
 
     var body: some View {
-        if animating {
+        if animating && !reduceMotion {
             TimelineView(.periodic(from: .now, by: 0.4)) { context in
                 let beat = Int(context.date.timeIntervalSince1970 / 0.4)
                 grid(beat % 6 == 5 ? Self.frameBlink : Self.frameOpen)
+                    .offset(x: beat % 4 < 2 ? -1 : 1, y: beat % 2 == 0 ? -0.5 : 0.5)
             }
         } else {
             grid(Self.frameOpen)

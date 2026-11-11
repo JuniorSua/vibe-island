@@ -8,13 +8,21 @@ leaving the window you're in.
 Written in Swift + SwiftUI, no Electron, no dependencies. **Fully local** — no
 network calls, no accounts, no telemetry.
 
-```
+## Install
+
+Requires macOS 14+ and the Xcode Command Line Tools (`xcode-select --install`).
+Plain SwiftPM, no Xcode project.
+
+```sh
+git clone https://github.com/JuniorSua/vibe-island.git
+cd vibe-island
 swift build && ./scripts/make-app.sh    # → /Applications/VibeIsland.app
+./scripts/install-autostart.sh          # optional: start at login
 ```
 
-./scripts/install-autostart.sh   # start at login + restart if it ever dies
-
-Requires macOS 14+. Plain SwiftPM, no Xcode project.
+The app is ad-hoc signed, so the first launch may need right-click → **Open**.
+On first run it offers to install its Claude Code hooks (backed up, and
+removable from the menu).
 
 ---
 
@@ -22,7 +30,7 @@ Requires macOS 14+. Plain SwiftPM, no Xcode project.
 
 **Watches your agents.** Claude Code sessions report in through hooks; Codex
 (GPT) sessions are discovered with zero configuration by matching running
-processes to their transcripts. Each session shows its prompt, live activity,
+processes to their transcripts and following turn start/completion events. Each session shows its prompt, live activity,
 model, project and elapsed time.
 
 **Answers for you.** When an agent needs input, a small popup appears under
@@ -76,8 +84,11 @@ agent hook ──▶ ~/.vibeisland/vibe-hook.sh ──▶ TCP 127.0.0.1:43917 �
   you opt in per session) are *held*: the TCP connection stays open, with 15 s
   heartbeats to detect a dead client, and the reply carries your decision.
 - **Codex/GPT discovery** — `ps` + a batched `lsof` map running `codex`
-  processes to their `~/.codex/sessions` transcripts; recent writes mean busy.
-  No hooks, no config.
+  processes to their local rollout transcripts (including headless T3 Code sessions).
+  An incremental reader tracks turn start/completion, keeps the full prompt and
+  model, and uses recent writes only as a fallback for older formats. No hooks.
+  Codex uses its own animated pet, with a built-in robot fallback; Claude keeps
+  its orange crab. Finished mascots keep their identity with a small green dot.
 - **Usage** — the 5-hour and 7-day quota strip is computed locally from your own
   transcripts (utilisation against your busiest window in the last 14 days).
 - **UI** — a non-activating `NSPanel` pinned to the notch, with a custom
@@ -137,3 +148,11 @@ scripts/demo.sh approval   # a plan review
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+## Codex regression checks
+
+Run `./scripts/test-codex.sh` with the macOS Command Line Tools. It checks
+modern and legacy rollouts, long turns, partial JSON/Unicode, large tool output,
+completion/resume, nested subagent filtering, and subprocess timeout recovery.
+The optional pet artwork can be restored with `./scripts/fetch-pets.sh` before
+building; the built-in Codex robot works without downloads.

@@ -3,8 +3,8 @@ import AppKit
 
 /// Zero-config discovery of Codex (GPT) sessions and process-level liveness
 /// for Claude sessions. No hooks needed: Codex holds its rollout transcript
-/// open and writes to it while working, so `ps` + `lsof` + transcript mtimes
-/// tell us everything. Adapted from agent-notch (MIT, github.com/realfishsam/
+/// open while working. `ps` + `lsof` establish ownership; rollout events
+/// establish turn state, with a timeout fallback for older transcripts. Adapted from agent-notch (MIT, github.com/realfishsam/
 /// agent-notch), with one deliberate difference: we do NOT require a TTY,
 /// because T3 Code spawns agents headless and those must still appear.
 ///
@@ -16,13 +16,16 @@ final class CodexWatcher {
     private let queue = DispatchQueue(label: "vibeisland.codexwatcher", qos: .utility)
     private var timer: Timer?
     private var scanning = false
+    private var readers: [String: CodexTranscriptReader] = [:]
 
     func start() {
-        let t = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
+        guard timer == nil else { return }
+        let t = Timer(timeInterval: 3, repeats: true) { [weak self] _ in
             self?.poll()
         }
         t.tolerance = 1
         timer = t
+        RunLoop.main.add(t, forMode: .common)
         poll()
     }
 
@@ -36,7 +39,9 @@ final class CodexWatcher {
         var snippet: String?
         var cwd: String?
         var tty: String?
-        var busy: Bool            // written to in the last 30s
+        var termProgram: String?
+        var turnStartedAt: Date?
+        var busy: Bool
         var processAlive: Bool
         var lastWrite: Date
     }
@@ -55,12 +60,12 @@ final class CodexWatcher {
             for p in procs where p.kind == "codex" {
                 guard let lsof = chunks[p.pid] else { continue }
                 let cwd = Self.cwd(fromLsof: lsof)
-                for path in Self.paths(inLsof: lsof, containing: "/.codex/sessions/") {
+                for path in Self.paths(inLsof: lsof, containing: "/sessions/") {
                     owners[path] = (p.tty, cwd)
                 }
             }
 
-            let states = Self.recentRollouts(owners: owners)
+            let states = self.recentRollouts(owners: owners)
             let claudeCount = procs.filter { $0.kind == "claude" }.count
 
             DispatchQueue.main.async {
@@ -82,7 +87,7 @@ final class CodexWatcher {
                 if st.busy {
                     newStatus = .working
                 } else if existing.status == .working {
-                    // Quiet for 30s+ → the turn ended.
+                    // Explicit completion, or a conservative legacy timeout.
                     newStatus = .done
                 } else if !st.processAlive && existing.status == .done,
                           Date().timeIntervalSince(st.lastWrite) > 600 {
@@ -93,9 +98,21 @@ final class CodexWatcher {
                 let modelChanged = existing.model != st.model && st.model != nil
                 let titleChanged = existing.title != st.title && st.prompt != nil
                 let recapChanged = existing.recap != st.snippet && st.snippet != nil
-                if newStatus != existing.status || modelChanged || titleChanged || recapChanged {
+                let newTurn = st.busy && (existing.status != .working ||
+                    st.turnStartedAt.map { $0 > existing.startedAt } == true)
+                let locationChanged = st.termProgram != nil && st.termProgram != existing.termProgram
+                if newStatus != existing.status || modelChanged || titleChanged || recapChanged || newTurn || locationChanged {
+                    if newStatus != existing.status {
+                        Diagnostics.log("[codex] \(st.id) \(existing.status.rawValue) → \(newStatus.rawValue)")
+                    }
                     store.update(id: st.id) { s in
                         s.status = newStatus
+                        if newTurn {
+                            s.startedAt = st.turnStartedAt ?? Date()
+                            s.acknowledged = false
+                            s.recap = st.snippet
+                        }
+                        if let program = st.termProgram { s.termProgram = program }
                         if let m = st.model { s.model = m }
                         if st.prompt != nil { s.title = st.title; s.prompt = st.prompt }
                         if let sn = st.snippet { s.recap = sn }
@@ -112,16 +129,17 @@ final class CodexWatcher {
                     title: st.title,
                     prompt: st.prompt,
                     cwd: st.cwd,
-                    termProgram: nil,
+                    termProgram: st.termProgram,
                     termSession: nil,
                     tty: st.tty,
                     status: .working,
-                    startedAt: Date(),
+                    startedAt: st.turnStartedAt ?? Date(),
                     lastEventAt: Date(),
                     recap: st.snippet,
                     model: st.model
                 )
                 store.upsert(session)
+                Diagnostics.log("[codex] discovered \(st.id)")
             }
         }
 
@@ -147,7 +165,7 @@ final class CodexWatcher {
     // MARK: - Process discovery (background queue)
 
     private static func agentProcesses() -> [(pid: String, tty: String?, kind: String)] {
-        guard let out = run("/bin/ps", ["-Axo", "pid=,tty=,command="], timeout: 2.0) else { return [] }
+        guard let out = ProcessCapture.run("/bin/ps", ["-Axo", "pid=,tty=,comm="], timeout: 2.0) else { return [] }
         var result: [(String, String?, String)] = []
         for line in out.split(whereSeparator: \.isNewline) {
             let parts = line.trimmingCharacters(in: .whitespaces)
@@ -156,7 +174,7 @@ final class CodexWatcher {
             let pid = String(parts[0])
             let tty = parts[1] == "??" ? nil : String(parts[1])
             let command = String(parts[2]).lowercased()
-            guard let first = command.split(separator: " ").first.map(String.init) else { continue }
+            let first = command
             if first == "claude" || first.hasSuffix("/claude") {
                 result.append((pid, tty, "claude"))
             } else if first == "codex" || first.hasSuffix("/codex") {
@@ -169,7 +187,7 @@ final class CodexWatcher {
     /// One lsof for all pids; -Fn output split per-pid on `p<pid>` markers.
     private static func lsofChunks(pids: [String]) -> [String: String] {
         guard !pids.isEmpty,
-              let out = run("/usr/sbin/lsof",
+              let out = ProcessCapture.run("/usr/sbin/lsof",
                             ["-a", "-p", pids.joined(separator: ","), "-Fn"],
                             timeout: 2.0) else { return [:] }
         var chunks: [String: String] = [:]
@@ -207,62 +225,45 @@ final class CodexWatcher {
         }
     }
 
-    private static func run(_ path: String, _ args: [String], timeout: TimeInterval) -> String? {
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: path)
-        p.arguments = args
-        let pipe = Pipe()
-        p.standardOutput = pipe
-        p.standardError = Pipe()
-        do { try p.run() } catch { return nil }
-        var data = Data()
-        let group = DispatchGroup()
-        group.enter()
-        DispatchQueue.global(qos: .utility).async {
-            data = pipe.fileHandleForReading.readDataToEndOfFile()
-            p.waitUntilExit()
-            group.leave()
-        }
-        guard group.wait(timeout: .now() + timeout) == .success else { p.terminate(); return nil }
-        return String(data: data, encoding: .utf8)
-    }
 
     // MARK: - Rollout scanning
 
-    private static func recentRollouts(owners: [String: (tty: String?, cwd: String?)]) -> [RolloutState] {
+    private func recentRollouts(owners: [String: (tty: String?, cwd: String?)]) -> [RolloutState] {
         let fm = FileManager.default
-        let root = fm.homeDirectoryForCurrentUser.appendingPathComponent(".codex/sessions")
-        guard let en = fm.enumerator(at: root, includingPropertiesForKeys: [.contentModificationDateKey]) else { return [] }
-
+        let home = ProcessInfo.processInfo.environment["CODEX_HOME"].map { URL(fileURLWithPath: $0) }
+            ?? fm.homeDirectoryForCurrentUser.appendingPathComponent(".codex")
+        let root = home.appendingPathComponent("sessions")
+        var files = Set(owners.keys.map { URL(fileURLWithPath: $0) })
+        let now = Date()
+        if let en = fm.enumerator(at: root, includingPropertiesForKeys: [.contentModificationDateKey]) {
+            for case let file as URL in en where file.pathExtension == "jsonl" {
+                if let mtime = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate,
+                   now.timeIntervalSince(mtime) < 30 * 60 { files.insert(file) }
+            }
+        }
         var out: [RolloutState] = []
-        for case let f as URL in en where f.pathExtension == "jsonl" {
-            guard let mtime = (try? f.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate,
-                  Date().timeIntervalSince(mtime) < 30 * 60 else { continue }
-            let meta = TranscriptInfo.codexMeta(of: f)
-            // Subagent rollouts fold into the parent's process; don't show
-            // them as their own sessions.
-            if meta.parentID != nil { continue }
-            let tail = TranscriptInfo.tail(of: f)
-            let alive = owners[f.path] != nil
-            let busy = Date().timeIntervalSince(mtime) < 30
-            let title = tail.prompt.map { EventHandler.titleFrom(prompt: $0) }
-                ?? meta.cwd.map { URL(fileURLWithPath: $0).lastPathComponent }
-                ?? "Codex"
+        readers = readers.filter { files.contains(URL(fileURLWithPath: $0.key)) }
+        for file in files {
+            guard let mtime = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate else { continue }
+            let reader = readers[file.path] ?? CodexTranscriptReader()
+            readers[file.path] = reader
+            let transcript = reader.read(file)
+            guard let id = transcript.id, transcript.parentID == nil else { continue }
+            let alive = owners[file.path] != nil
+            let title = transcript.prompt.map { EventHandler.titleFrom(prompt: $0) }
+                ?? transcript.cwd.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "Codex"
             out.append(RolloutState(
-                id: "codex-\(meta.id)",
-                title: title,
-                prompt: tail.prompt,
-                model: tail.model,
-                snippet: tail.snippet,
-                cwd: owners[f.path]?.cwd ?? meta.cwd,
-                tty: owners[f.path]?.tty,
-                busy: busy,
-                processAlive: alive,
-                lastWrite: mtime
+                id: "codex-\(id)", title: title, prompt: transcript.prompt,
+                model: transcript.model, snippet: transcript.snippet,
+                cwd: transcript.cwd ?? owners[file.path]?.cwd, tty: owners[file.path]?.tty,
+                termProgram: transcript.termProgram, turnStartedAt: transcript.turnStartedAt,
+                busy: transcript.isBusy(lastWrite: mtime, processAlive: alive, now: now),
+                processAlive: alive, lastWrite: mtime
             ))
         }
         return out
     }
+
 }
 
 // MARK: - Transcript parsing (shared with Claude model extraction)

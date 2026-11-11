@@ -6,7 +6,12 @@ final class SessionStore: ObservableObject {
     static let shared = SessionStore()
 
     @Published private(set) var sessions: [Session] = []
-    @Published var expanded: Bool = false
+    /// The big drop-down panel is retired: the mascot's popup is the only
+    /// surface. Pinned to false so no stray code path can ever open (and
+    /// strand) the old panel again.
+    @Published var expanded: Bool = false {
+        didSet { if expanded { expanded = false } }
+    }
 
     /// Bumped every 30s so time-based UI (elapsed labels, done-session expiry)
     /// re-evaluates even when no events arrive.
@@ -35,6 +40,8 @@ final class SessionStore: ObservableObject {
 
     /// Session id → (connection token, reply callback) for a held PreToolUse connection.
     private var pendingReplies: [String: (token: UUID, reply: (String) -> Void)] = [:]
+
+    private let persistenceQueue = DispatchQueue(label: "vibeisland.sessions.save", qos: .utility)
 
     private let saveURL: URL = {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -175,7 +182,9 @@ final class SessionStore: ObservableObject {
         prune()
         let snapshot = sessions
         let url = saveURL
-        Task.detached(priority: .utility) {
+        // Preserve mutation order: independent detached writes could let an
+        // older snapshot overwrite a newer session discovered in the same poll.
+        persistenceQueue.async {
             let enc = JSONEncoder()
             enc.dateEncodingStrategy = .iso8601
             if let data = try? enc.encode(snapshot) {

@@ -121,10 +121,12 @@ struct SessionRowView: View {
             }
         }
         .contextMenu {
-            Toggle("Approve from notch", isOn: Binding(
-                get: { session.approveFromNotch },
-                set: { on in store.update(id: session.id) { $0.approveFromNotch = on } }
-            ))
+            if session.agent == .claudeCode {
+                Toggle("Approve from notch", isOn: Binding(
+                    get: { session.approveFromNotch },
+                    set: { on in store.update(id: session.id) { $0.approveFromNotch = on } }
+                ))
+            }
             Button("Remove") { store.remove(id: session.id) }
         }
     }
@@ -138,18 +140,9 @@ struct SessionRowView: View {
         switch session.status {
         case .done:
             PixelCheckView()
-        case .waiting:
-            if session.agent == .codex {
-                PetSpriteView(animating: false, height: 20)
-            } else {
-                CrabView(animating: true, scale: 0.85, tint: SessionStatus.waiting.color)
-            }
         default:
-            if session.agent == .codex {
-                PetSpriteView(animating: session.status == .working, height: 20)
-            } else {
-                CrabView(animating: session.status == .working, scale: 0.85)
-            }
+            AgentMascotView(agent: session.agent, animating: session.status == .working,
+                            height: 20, waiting: session.status == .waiting)
         }
     }
 

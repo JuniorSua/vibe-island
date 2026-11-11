@@ -56,6 +56,15 @@ struct SpeechBubbleView: View {
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundStyle(.white.opacity(0.95))
                             .fixedSize(horizontal: false, vertical: true)
+                        if req.kind == .plan, !req.body.isEmpty {
+                            // A short preview so Approve is never blind; the
+                            // full plan is one "Revise" away in the agent app.
+                            Text(req.body)
+                                .font(.system(size: 10.5))
+                                .foregroundStyle(.white.opacity(0.7))
+                                .lineLimit(8)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
                         answerControls(req)
                     }
                 } else {
@@ -86,7 +95,12 @@ struct SpeechBubbleView: View {
                         .foregroundStyle(accent.opacity(0.9))
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
-
+                    if session.status == .waiting {
+                        Button("Open agent app to answer…") { TerminalJump.jump(to: session) }
+                            .buttonStyle(.plain)
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(Self.teal)
+                    }
                 }
                 }
             }
@@ -111,13 +125,8 @@ struct SpeechBubbleView: View {
         case .done:
             PixelCheckView()
         default:
-            if session.agent == .codex {
-                PetSpriteView(animating: session.status == .working, height: 22)
-            } else {
-                CrabView(animating: session.status == .working,
-                         tint: session.status == .waiting ? SessionStatus.waiting.color
-                                                          : MascotKit.claudeOrange)
-            }
+            AgentMascotView(agent: session.agent, animating: session.status == .working,
+                            height: 22, waiting: session.status == .waiting)
         }
     }
 
@@ -128,9 +137,9 @@ struct SpeechBubbleView: View {
             if let recap = session.recap, !recap.isEmpty { return "· \(recap)" }
             return "· Working…"
         case .waiting:
-            return "◆ Needs you — ⌥⌘I to answer"
+            return "◆ Needs you"
         case .done:
-            return "✓ Done — ⌥⌘I to review or jump"
+            return "✓ Done"
         case .ended:
             return "Ended"
         }
@@ -142,7 +151,7 @@ struct SpeechBubbleView: View {
         switch req.kind {
         case .question:
             VStack(alignment: .leading, spacing: 4) {
-                ForEach(Array(req.options.prefix(4).enumerated()), id: \.offset) { i, option in
+                ForEach(Array(req.options.prefix(9).enumerated()), id: \.offset) { i, option in
                     Button {
                         answer(option)
                     } label: {
@@ -163,7 +172,15 @@ struct SpeechBubbleView: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .keyboardShortcut(KeyEquivalent(Character("\(i + 1)")), modifiers: .command)
                 }
+                Button("Answer in app…") {
+                    onAnswer?("{}", .init(symbol: "arrow.up.forward", text: "Continue in your agent app", color: .green))
+                    TerminalJump.jump(to: session)
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 10))
+                .foregroundStyle(.white.opacity(0.65))
             }
         case .permission:
             HStack(spacing: 6) {
@@ -179,9 +196,18 @@ struct SpeechBubbleView: View {
                 .buttonStyle(LightButtonStyle())
             }
         case .plan:
-            Text("Press ⌥⌘I to review the plan")
-                .font(.system(size: 10))
-                .foregroundStyle(.white.opacity(0.45))
+            HStack(spacing: 6) {
+                Button { revisePlan() } label: {
+                    Text("Revise").font(.system(size: 11, weight: .semibold))
+                        .frame(maxWidth: .infinity).padding(.vertical, 5)
+                }
+                .buttonStyle(DarkButtonStyle())
+                Button { approvePlan() } label: {
+                    Text("Approve").font(.system(size: 11, weight: .semibold))
+                        .frame(maxWidth: .infinity).padding(.vertical, 5)
+                }
+                .buttonStyle(LightButtonStyle())
+            }
         }
     }
 
@@ -195,6 +221,17 @@ struct SpeechBubbleView: View {
         onAnswer?("""
         {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow","permissionDecisionReason":"Approved from Vibe Island"}}
         """, .init(symbol: "checkmark", text: "Allowed", color: .green))
+    }
+
+    private func approvePlan() {
+        onAnswer?("""
+        {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow","permissionDecisionReason":"Approved from Vibe Island"}}
+        """, .init(symbol: "checkmark", text: "Plan approved", color: .green))
+    }
+
+    private func revisePlan() {
+        onAnswer?(denyJSON("User asked for plan revisions from Vibe Island."),
+                  .init(symbol: "arrow.uturn.backward", text: "Sent back for revision", color: .orange))
     }
 
     private func deny() {

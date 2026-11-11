@@ -21,6 +21,7 @@ final class PanelMetrics: ObservableObject {
     /// Global frame of the walking-mascot cluster, so the chat bubble can point
     /// its tail up at the exact logo the user is hovering.
     @Published var mascotFrame: CGRect = .zero
+    @Published var agentFrames: [AgentKind: CGRect] = [:]
     var hasNotch: Bool { notchWidth > 0 }
 
     /// Last good reading per display. `auxiliaryTopLeftArea` / `safeAreaInsets`
@@ -273,7 +274,8 @@ final class NotchPanelController {
         catcher.contentView = view
         hoverCatcher = catcher
         layoutHoverCatcher()
-        catcher.orderFrontRegardless()
+        // Not ordered in: with the drop-down panel retired, hovering the bare
+        // notch has nothing to open.
     }
 
     private func layoutHoverCatcher() {
@@ -481,9 +483,9 @@ final class NotchPanelController {
     /// directly — as the old in-window bubble did — drew the popup `overhang`
     /// points too low. Convert properly: flip Y, then hosting → window →
     /// screen.
-    func mascotScreenRect() -> CGRect? {
+    func mascotScreenRect(for agent: AgentKind? = nil) -> CGRect? {
         guard let hosting = hostingView else { return nil }
-        let r = metrics.mascotFrame
+        let r = agent.flatMap { metrics.agentFrames[$0] } ?? metrics.mascotFrame
         guard r.width > 4, r.height > 4 else { return nil }
         // NSHostingView is a FLIPPED view (top-left origin), so SwiftUI's
         // rect is already in its coordinate space — flipping by hand here

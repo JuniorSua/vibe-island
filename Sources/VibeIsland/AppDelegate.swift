@@ -21,14 +21,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         bubbleController = BubbleController()
         offerHookInstallIfNeeded()
 
-        // ⌥⌘I peeks the panel from anywhere — the island is invisible when
-        // idle, so there needs to be a way in without hunting for the notch.
-        HotKeyCenter.shared.register { [weak self] in
-            Task { @MainActor in
-                let store = SessionStore.shared
-                store.expanded.toggle()
-                if store.expanded { self?.panelController.showForAttention() }
-            }
+        // ⌥⌘I pops the mascot's popup for the most relevant session — the
+        // same surface as hovering, reachable without the mouse.
+        HotKeyCenter.shared.register {
+            Task { @MainActor in BubbleController.shared?.showMostRelevant() }
         }
         startBadgeUpdates()
 
@@ -78,7 +74,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(statusHeaderItem)
         menu.addItem(.separator())
 
-        let showItem = menu.addItem(withTitle: "Show Panel  ⌥⌘I",
+        let showItem = menu.addItem(withTitle: "Show Popup  ⌥⌘I",
                                     action: #selector(showPanel), keyEquivalent: "")
         showItem.target = self
         menu.addItem(withTitle: "Clear Finished Sessions", action: #selector(clearFinished), keyEquivalent: "").target = self
@@ -171,8 +167,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func showPanel() {
         Task { @MainActor in
-            SessionStore.shared.expanded = true
-            panelController.showForAttention()
+            BubbleController.shared?.showMostRelevant()
         }
     }
 

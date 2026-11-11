@@ -27,7 +27,9 @@ final class BubbleController {
     private var clickMonitor: Any?
     private var enteredAt: Date?
     private var leftAt: Date?
+    private var renderedSession: Session?
     private var shown = false
+    private var hoveredAgent: AgentKind?
     /// While set, pointer-based hiding is suspended (debug screenshots only).
     private var debugUntil: Date?
     /// A session whose question/approval is showing. The popup stays put while
@@ -47,7 +49,7 @@ final class BubbleController {
     private let leaveGrace: TimeInterval = 0.35
 
     init() {
-        panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 280, height: 90),
+        panel = NotchPanel(contentRect: NSRect(x: 0, y: 0, width: 280, height: 90),
                         styleMask: [.borderless, .nonactivatingPanel],
                         backing: .buffered, defer: false)
         panel.isOpaque = false
@@ -103,7 +105,7 @@ final class BubbleController {
         // A pending request pins the popup open (the agent is blocked on it).
         if let id = stickySession {
             guard let session = store.session(id: id), session.pendingRequest != nil,
-                  let mascot = NotchPanelController.shared?.mascotScreenRect() else {
+                  let mascot = NotchPanelController.shared?.mascotScreenRect(for: session.agent) else {
                 stickySession = nil
                 stickyUntil = nil
                 hide()
@@ -125,8 +127,15 @@ final class BubbleController {
             return
         }
 
-        guard let mascot = NotchPanelController.shared?.mascotScreenRect(),
-              let session = bubbleSession,
+        // Resolve the actual hovered brand; a busy Claude session must not
+        // replace Codex's popup merely because it sorts first in the store.
+        if let agent = AgentKind.allCases.first(where: { agent in
+            PanelMetrics.shared.agentFrames[agent] != nil &&
+            NotchPanelController.shared?.mascotScreenRect(for: agent)?.contains(NSEvent.mouseLocation) == true
+        }) { hoveredAgent = agent }
+
+        guard let session = bubbleSession,
+              let mascot = NotchPanelController.shared?.mascotScreenRect(for: session.agent),
               !store.expanded, store.toast == nil else {
             hide()
             return
@@ -158,7 +167,9 @@ final class BubbleController {
     }
 
     private var bubbleSession: Session? {
-        let live = store.activeSessions
+        let all = store.activeSessions
+        let matching = all.filter { $0.agent == hoveredAgent }
+        let live = matching.isEmpty ? all : matching
         return live.first { $0.status == .waiting }
             ?? live.first { $0.status == .working }
             ?? live.first { $0.status == .done && !$0.acknowledged }
@@ -172,6 +183,7 @@ final class BubbleController {
         refresh(session: session, under: mascot)
         panel.alphaValue = 0
         panel.orderFrontRegardless()
+        if session.pendingRequest != nil { panel.makeKey() }
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = 0.12
             panel.animator().alphaValue = 1
@@ -180,9 +192,11 @@ final class BubbleController {
 
     private func refresh(session: Session, under mascot: CGRect) {
         // Interactive only when the agent is actually asking something.
-        let interactive = session.pendingRequest != nil
+        let interactive = session.pendingRequest != nil || session.status == .waiting
         panel.ignoresMouseEvents = !interactive
 
+        if renderedSession != session {
+        renderedSession = session
         hosting.rootView = AnyView(
             SpeechBubbleView(session: session) { [weak self] json, toast in
                 guard let self else { return }
@@ -193,6 +207,7 @@ final class BubbleController {
             }
             .environmentObject(store)
         )
+        }
 
         let size = hosting.fittingSize
         let w = max(size.width, 240), h = size.height
@@ -203,8 +218,10 @@ final class BubbleController {
         x = min(max(x, screen.frame.minX + 8), screen.frame.maxX - w - 8)
         let y = mascot.minY - h - 2
         let f = NSRect(x: x.rounded(), y: y.rounded(), width: w, height: h)
+        if panel.frame != f {
         panel.setFrame(f, display: true)
         Diagnostics.log("[bubble] placed at \(NSStringFromRect(f)) under mascot \(NSStringFromRect(mascot)) gap=\(mascot.minY - f.maxY)")
+        }
     }
 
     private func hide() {
@@ -223,7 +240,7 @@ final class BubbleController {
         guard let session = store.session(id: sessionID) else { return }
         stickySession = sessionID
         stickyUntil = Date().addingTimeInterval(stickyLinger)
-        guard let mascot = NotchPanelController.shared?.mascotScreenRect() else {
+        guard let mascot = NotchPanelController.shared?.mascotScreenRect(for: session.agent) else {
             // Mascot not laid out yet (session just appeared) — retry shortly.
             Task { @MainActor in
                 try? await Task.sleep(nanoseconds: 400_000_000)
@@ -232,6 +249,20 @@ final class BubbleController {
             return
         }
         show(session: session, under: mascot)
+    }
+
+    /// ⌥⌘I / menu bar / mascot click: pop the popup for whatever matters
+    /// most (a waiting question first), with the usual 15s tuck-away.
+    func showMostRelevant() {
+        let all = store.activeSessions
+        guard let session = all.first(where: { $0.status == .waiting }) ?? bubbleSession else { return }
+        hoveredAgent = session.agent
+        if session.pendingRequest != nil {
+            showRequest(sessionID: session.id)
+        } else if let mascot = NotchPanelController.shared?.mascotScreenRect(for: session.agent) {
+            debugUntil = Date().addingTimeInterval(4)   // brief peek, then away
+            show(session: session, under: mascot)
+        }
     }
 
     /// Debug/testing: show it without a pointer, self-expiring.

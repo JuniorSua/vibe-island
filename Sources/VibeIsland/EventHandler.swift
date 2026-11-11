@@ -25,8 +25,7 @@ final class EventHandler {
 
         // Debug/UI-only events never create sessions.
         if p.hook_event_name == "VibeShow" {
-            store.expanded = true
-            NotchPanelController.shared?.showForAttention()
+            BubbleController.shared?.debugFlash()
             reply("{}")
             return
         }
@@ -45,13 +44,24 @@ final class EventHandler {
             return
         }
         if p.hook_event_name == "VibeHover" {
-            store.expanded = true
-            NotchPanelController.shared?.logGeometry(tag: "hover-expand")
+            BubbleController.shared?.debugFlash()
+            NotchPanelController.shared?.logGeometry(tag: "hover")
             reply("{}")
             return
         }
 
+        // Subagents share the parent's session_id. Their completion must not
+        // finish the parent or discard its held question.
+        if p.hook_event_name == "SubagentStop" { reply("{}"); return }
+
         ensureSession(sessionID: sessionID, event: event)
+        if store.session(id: sessionID)?.pendingRequest != nil,
+           p.hook_event_name != "SessionEnd" {
+            // Background tools and notifications may arrive while the parent
+            // is blocked. The pending request owns the visible state until resolved.
+            reply("{}")
+            return
+        }
 
         switch p.hook_event_name ?? "" {
         case "SessionStart":
@@ -95,7 +105,7 @@ final class EventHandler {
             SoundEngine.shared.play(.needsAttention)
             reply("{}")
 
-        case "Stop", "SubagentStop":
+        case "Stop":
             store.update(id: sessionID) { s in
                 s.status = .done
                 s.pendingRequest = nil
@@ -114,6 +124,7 @@ final class EventHandler {
             }
 
         case "SessionEnd":
+            store.resolve(sessionID: sessionID, response: "{}")
             store.update(id: sessionID) { s in
                 s.status = .ended
                 s.pendingRequest = nil
@@ -158,6 +169,20 @@ final class EventHandler {
         let request: PendingRequest
         switch tool {
         case "AskUserQuestion":
+            // The compact UI supports one single-choice question. Leave richer
+            // questions to Claude's native UI instead of silently dropping fields.
+            let questions = p.tool_input?["questions"]?.arrayValue ?? []
+            guard questions.count == 1,
+                  questions[0]["multiSelect"] != .bool(true),
+                  let rawOptions = questions[0]["options"]?.arrayValue,
+                  !rawOptions.isEmpty, rawOptions.count <= 9 else {
+                store.update(id: sessionID) { s in
+                    s.status = .waiting
+                    s.recap = "Answer the question in your agent app"
+                }
+                reply("{}")
+                return
+            }
             let (title, body, options) = Self.parseQuestion(p.tool_input)
             request = PendingRequest(kind: .question, toolName: tool, title: title, body: body, options: options)
         case "ExitPlanMode":
@@ -198,7 +223,7 @@ final class EventHandler {
                 changed = true
             }
             if existing.tty == nil, let tty = event.tty, !tty.isEmpty, tty != "??" { existing.tty = tty; changed = true }
-            if existing.termProgram == nil, let tp = event.term_program, !tp.isEmpty { existing.termProgram = tp; changed = true }
+            if existing.termProgram?.isEmpty != false, let tp = event.term_program, !tp.isEmpty { existing.termProgram = tp; changed = true }
             if existing.cwd == nil, let cwd = p.cwd { existing.cwd = cwd; changed = true }
             if existing.transcriptPath == nil, let tp = p.transcript_path { existing.transcriptPath = tp; changed = true }
             if changed { store.upsert(existing) }

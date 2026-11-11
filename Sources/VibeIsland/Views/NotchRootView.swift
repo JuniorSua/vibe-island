@@ -311,11 +311,12 @@ struct MascotBarView: View {
     @EnvironmentObject var metrics: PanelMetrics
     var onHover: (Bool) -> Void = { _ in }
 
-    private var claudeSessions: [Session] {
-        store.activeSessions.filter { $0.agent != .codex }
+    private var visibleAgents: [AgentKind] {
+        AgentKind.allCases.filter { slot(for: sessions(for: $0)) != .none }
     }
-    private var codexSessions: [Session] {
-        store.activeSessions.filter { $0.agent == .codex }
+
+    private func sessions(for agent: AgentKind) -> [Session] {
+        store.activeSessions.filter { $0.agent == agent }
     }
 
     private enum Slot { case working, waiting, doneFresh, none }
@@ -328,10 +329,9 @@ struct MascotBarView: View {
     }
 
     var body: some View {
-        let claude = slot(for: claudeSessions)
-        let codex = slot(for: codexSessions)
+        let agents = visibleAgents
 
-        if claude == .none && codex == .none {
+        if agents.isEmpty {
             // No mascots, but the notch itself must stay hoverable/clickable
             // so the island opens even when no agents are running. Fully
             // transparent — the bare notch looks untouched — and sized to the
@@ -344,11 +344,9 @@ struct MascotBarView: View {
                 .frame(height: metrics.hasNotch ? metrics.notchHeight : 24, alignment: .top)
                 .contentShape(Rectangle())
                 .onHover(perform: onHover)
-                .onTapGesture { store.expanded = true }
                 .contextMenu { IslandContextMenu() }
         } else {
-            let slotsWidth = width(claude) + width(codex)
-                + (claude != .none && codex != .none ? 8 : 0)
+            let slotsWidth = CGFloat(agents.count) * 30 + CGFloat(max(0, agents.count - 1)) * 8
             let gap: CGFloat = MascotLayout.gapFromNotch
             let notchZone = metrics.hasNotch ? metrics.notchWidth : 0
             // Mascots live on the LEFT of the notch: the right side of the
@@ -362,8 +360,18 @@ struct MascotBarView: View {
             HStack(spacing: 0) {
                 HStack(spacing: 0) {
                     HStack(spacing: 8) {
-                        slotView(claude, isCodex: false)
-                        slotView(codex, isCodex: true)
+                        ForEach(agents, id: \.self) { agent in
+                            slotView(slot(for: sessions(for: agent)), agent: agent)
+                                .background(GeometryReader { geo in
+                                    Color.clear
+                                        .onAppear { metrics.agentFrames[agent] = geo.frame(in: .named("islandRoot")) }
+                                        .onChange(of: geo.frame(in: .named("islandRoot"))) { _, frame in
+                                            metrics.agentFrames[agent] = frame
+                                        }
+                                        .onDisappear { metrics.agentFrames.removeValue(forKey: agent) }
+                                })
+                                .help("\(agent.displayName) · \(sessions(for: agent).count) session(s)")
+                        }
                     }
                     // Its own little section: padding keeps it clear of
                     // neighbouring menu-bar icons instead of butting against
@@ -392,9 +400,9 @@ struct MascotBarView: View {
                     x: 0, y: 0,
                     width: 100_000,
                     height: HoverTuning.stripHeight)))
-                .onTapGesture { store.expanded = true }
+                .onTapGesture { BubbleController.shared?.showMostRelevant() }
                 .contextMenu { IslandContextMenu() }
-                .help("Vibe Island — hover the mascot for status, click to open")
+                .help("Vibe Island — hover the mascot for status")
 
                 if metrics.hasNotch {
                     Color.clear.frame(width: slotsWidth + 2 * MascotLayout.sidePadding + gap,
@@ -405,40 +413,24 @@ struct MascotBarView: View {
         }
     }
 
-    private func width(_ s: Slot) -> CGFloat {
-        switch s {
-        case .none: return 0
-        case .doneFresh: return 20
-        default: return 30
-        }
-    }
-
     @ViewBuilder
-    private func slotView(_ slot: Slot, isCodex: Bool) -> some View {
+    private func slotView(_ slot: Slot, agent: AgentKind) -> some View {
         switch slot {
         case .working:
-            if isCodex {
-                PetSpriteView(animating: true, height: 24)
-            } else {
-                CrabView(animating: true)
-            }
+            AgentMascotView(agent: agent, animating: true)
         case .waiting:
-            // Pulses so an unanswered request still catches the eye once the
-            // panel has tucked itself away.
-            Group {
-                if isCodex {
-                    PetSpriteView(animating: false, height: 24)
-                } else {
-                    CrabView(animating: true, tint: SessionStatus.waiting.color)
-                }
-            }
-            .modifier(AttentionPulse())
+            AgentMascotView(agent: agent, animating: false, waiting: true)
+                .modifier(AttentionPulse())
         case .doneFresh:
-            GreenBlobView()
+            AgentMascotView(agent: agent, animating: false)
+                .overlay(alignment: .bottomTrailing) {
+                    Circle().fill(SessionStatus.done.color).frame(width: 5, height: 5)
+                }
         case .none:
             EmptyView()
         }
     }
+
 }
 
 // MARK: - Expanded panel
@@ -524,7 +516,7 @@ struct ExpandedPanelView: View {
                         .font(.system(size: 12, weight: .semibold))
                 }
                 .foregroundStyle(SessionStatus.waiting.color)
-                Text("Sessions can't appear until the notifier is installed.")
+                Text("Claude sessions need the notifier. Codex is detected automatically.")
                     .font(.system(size: 10))
                     .foregroundStyle(.white.opacity(0.45))
                 Button {
@@ -552,7 +544,7 @@ struct ExpandedPanelView: View {
             Text("No agents working")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.white.opacity(0.65))
-            Text("Start Claude Code in any terminal — sessions appear here.")
+            Text("Start a task in Claude Code or Codex — sessions appear here.")
                 .font(.system(size: 10))
                 .foregroundStyle(.white.opacity(0.4))
                 .multilineTextAlignment(.center)

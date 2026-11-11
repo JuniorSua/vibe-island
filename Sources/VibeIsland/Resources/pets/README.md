@@ -7,4 +7,4 @@ The Codex mascots are OpenAI's official "Codex Pets" sprite sheets. They are
 this folder before building if you want the animated Codex pet.
 
 Without them the app still builds and runs — Codex sessions simply fall back to
-the same pixel mascot used for Claude sessions.
+a distinct teal robot with a subtle working animation. Claude retains its orange crab.

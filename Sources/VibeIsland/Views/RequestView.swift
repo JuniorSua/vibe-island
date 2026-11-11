@@ -144,6 +144,13 @@ struct RequestView: View {
                     QuestionOptionRow(index: i, label: option) { answer(option) }
                         .keyboardShortcut(KeyEquivalent(Character("\(i + 1)")), modifiers: .command)
                 }
+                Button("Answer in app…") {
+                    store.resolve(sessionID: session.id, response: "{}")
+                    store.expanded = false
+                    TerminalJump.jump(to: session)
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 10))
             }
         }
     }

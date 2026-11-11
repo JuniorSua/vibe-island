@@ -6,6 +6,8 @@ import Foundation
 /// app activation for everything else.
 enum TerminalJump {
     private static let bundleIDs: [String: String] = [
+        "t3code": "com.t3tools.t3code",
+        "codex-desktop": "com.openai.codex",
         "iTerm.app": "com.googlecode.iterm2",
         "Apple_Terminal": "com.apple.Terminal",
         "ghostty": "com.mitchellh.ghostty",
@@ -21,6 +23,8 @@ enum TerminalJump {
     ]
 
     private static let displayNames: [String: String] = [
+        "t3code": "T3 Code",
+        "codex-desktop": "Codex",
         "iTerm.app": "iTerm2",
         "Apple_Terminal": "Terminal",
         "ghostty": "Ghostty",

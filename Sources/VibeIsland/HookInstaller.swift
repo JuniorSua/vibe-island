@@ -59,7 +59,20 @@ enum HookInstaller {
         fi
 
         TTYNAME=$(ps -o tty= -p $PPID 2>/dev/null | tr -d ' ')
-        SAFE_TP=$(printf '%s' "${TERM_PROGRAM:-}" | tr -d '"\\\\')
+        # SDK hosts may not set TERM_PROGRAM. Resolve the owning desktop app.
+        HOST_PROGRAM="${TERM_PROGRAM:-}"
+        if [ -z "$HOST_PROGRAM" ]; then
+            ANCESTOR_PID=$PPID
+            for STEP in 1 2 3 4 5 6 7 8; do
+                ANCESTOR_NAME=$(ps -p "$ANCESTOR_PID" -o comm= 2>/dev/null)
+                case "$ANCESTOR_NAME" in
+                    *"T3 Code"*) HOST_PROGRAM=t3code; break ;;
+                esac
+                ANCESTOR_PID=$(ps -p "$ANCESTOR_PID" -o ppid= 2>/dev/null | tr -d ' ')
+                [ -z "$ANCESTOR_PID" ] || [ "$ANCESTOR_PID" = 1 ] && break
+            done
+        fi
+        SAFE_TP=$(printf '%s' "$HOST_PROGRAM" | tr -d '"\\\\')
         SAFE_TS=$(printf '%s' "${ITERM_SESSION_ID:-${TERM_SESSION_ID:-}}" | tr -d '"\\\\')
         SAFE_TTY=$(printf '%s' "${TTYNAME:-}" | tr -d '"\\\\')
 
